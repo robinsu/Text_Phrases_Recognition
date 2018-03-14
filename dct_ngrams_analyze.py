@@ -108,15 +108,16 @@ def stand_sigmoid(a):
     z_score =(a - np.mean(a)) / np.std(a)
     return sigmoid_array(z_score)
 
-def entropy5(pk, qk=1):
-    return -np.sum(pk * np.log2(pk/qk))
+def entropy6(obs, pk, qk=1):
+    obs_rate = obs / np.sum(obs)
+    return -np.sum( obs_rate * np.log2(pk/qk))
 
 def get_entropy(bins, prob_base):
     """ bins: dict(), {next_word, occurs} """
     # print("\tget entropy by %s, %s" % (kw, occur))
     if len(bins) == 0: # 当找不到任何前/后字的时候 entropy 要算多少呢？
         return prob_base
-    return entropy5( np.fromiter(bins.values(), dtype=float) , prob_base)
+    return entropy6( np.array([val['occur'] for val in bins.values()], dtype=float), np.array([val['freq'] for val in bins.values()], dtype=float), prob_base)
 
 def process_ngrams(n_words, cfdist ):
     """ for multiprocess version """
@@ -124,31 +125,31 @@ def process_ngrams(n_words, cfdist ):
     df_dict = pd.DataFrame.from_dict(dict(cfdist[n_words]), orient='index')
     df_dict.columns=['occur']
     print('dict dataframe shape', df_dict.shape)
-
+    
     df_dict = df_dict[df_dict.occur > min_occur]
-    # pre aggreate context words group by
-    agg_EndsWords = defaultdict(dict)
-    agg_StartsWords = defaultdict(dict)
-    for t in cfdist[n_words+1].keys():
+    # pre aggreate context words group by , improve performance
+    agg_EndsWords = defaultdict(dict) 
+    agg_StartsWords = defaultdict(dict)    
+    for t,ti in cfdist[n_words+1].items():
         #print(j[:-1], j[-1], nj)
-        agg_EndsWords[t[1:]][t[0]] = cfdist[n_words+1].freq(t)
-        agg_StartsWords[t[:-1]][t[-1]] = cfdist[n_words+1].freq(t)
-
-    df_dict['prob'] = df_dict.index.map(lambda kw: cfdist[n_words].freq(kw))
+        agg_EndsWords[t[1:]][t[0]] = { 'occur': ti, 'freq': cfdist[n_words+1].freq(t) }
+        agg_StartsWords[t[:-1]][t[-1]] = { 'occur': ti, 'freq': cfdist[n_words+1].freq(t) }  
+    
+    df_dict['prob'] = df_dict.index.map(lambda kw: cfdist[n_words].freq(kw)) 
     df_dict['left_entropy'] = df_dict.apply(lambda r: get_entropy( agg_EndsWords[r.name], r.prob), axis=1)
     df_dict['right_entropy'] = df_dict.apply(lambda r: get_entropy( agg_StartsWords[r.name], r.prob), axis=1)
-
-    # final score 
-    print("end process ngrams n=%s, %s" % (n_words, df_dict.shape))
+    
+    #df_dict['left_entropy'].fillna( df_dict['left_entropy'].median() , inplace=True)
+    #df_dict['right_entropy'].fillna( df_dict['right_entropy'].median() , inplace=True)
     df_dict['left_entropy'].fillna( df_dict['prob'] , inplace=True)
     df_dict['right_entropy'].fillna( df_dict['prob'] , inplace=True)
-
-    df_dict['prob_z_sigmoid'] = stand_sigmoid(df_dict['prob'].values)
-    df_dict['l_entropy_z_sigmoid'] = stand_sigmoid(df_dict['left_entropy'].values)
-    df_dict['r_entropy_z_sigmoid'] = stand_sigmoid(df_dict['right_entropy'].values)
+    
+    df_dict['prob_z_sigmoid'] = stand_sigmoid(df_dict['prob'].values) 
+    df_dict['l_entropy_z_sigmoid'] = stand_sigmoid(df_dict['left_entropy'].values) 
+    df_dict['r_entropy_z_sigmoid'] = stand_sigmoid(df_dict['right_entropy'].values) 
     df_dict['score'] = df_dict['prob_z_sigmoid'] + df_dict['l_entropy_z_sigmoid'] + df_dict['r_entropy_z_sigmoid']
-
-    return df_dict[(df_dict["prob_z_sigmoid"] > 0.5) & (df_dict["l_entropy_z_sigmoid"] > 0.5) & (df_dict["r_entropy_z_sigmoid"] > 0.5)]
+    
+    return df_dict[(df_dict["prob_z_sigmoid"] > 0.4) & (df_dict["l_entropy_z_sigmoid"] > 0.6) & (df_dict["r_entropy_z_sigmoid"] > 0.6)]
 
 
 import multiprocessing as mp
